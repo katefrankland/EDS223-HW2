@@ -1,0 +1,314 @@
+---
+title: "EDS 223 Homework 2: Environmental Justice Patterns"
+date: "2026-10-24"
+author: "Kate Frankland"
+format:
+  pdf:
+    toc: false
+execute:
+  warning: false
+  message: false
+---
+
+## Setup
+
+```{r}
+# Loading packages
+library(tidyverse)
+library(sf)
+library(tmap)
+library(spData)
+library(janitor)
+library(here)
+library(knitr)
+```
+
+```{r}
+tmap_mode("plot")
+```
+
+## Part 1
+
+```{r}
+
+#| output: false
+
+# Reading in and cleaning data 
+# Reading and cleaning EJScreen data
+ejscreen <- st_read(
+  here("data",
+    "ejscreen",
+    "EJSCREEN_2023_BG_StatePct_with_AS_CNMI_GU_VI.gdb")) |>
+  clean_names()
+
+# Reading and cleaning HOLC data
+holc <- st_read(
+  here("data",
+    "mapping-inequality",
+    "mapping-inequality-los-angeles.json")) |>
+  clean_names()
+
+# Read in crashes data 
+crashes <- read.csv('data/SWITRS_LA/Crashes.csv')
+```
+
+```{r}
+#| output: false
+
+# Organizing the grade values 
+holc <- holc |>
+  mutate( grade = str_extract(as.character(grade), "^[ABCD]"),
+    grade = factor(grade, levels = c("A", "B", "C", "D"))
+  )
+```
+```{r}
+# Creating the HOLC Map 
+
+# HOLC grade colors
+holc_colors <- c(
+  "A" = "#99a9f6",
+  "B" = "#adf9b2",
+  "C" = "#f6dcf5",
+  "D" = "#e619c0")
+
+plot_colors <- c(
+  holc_colors,
+  "Not graded" = "#999999")
+
+holc_map <- tm_basemap(server = "Esri.WorldTopoMap") +
+  tm_shape(holc, is.main = TRUE) +
+  tm_polygons(
+    fill = "grade",
+    fill_alpha = 0.7,
+    fill.scale = tm_scale_categorical(
+      values = holc_colors,
+      labels = c("A: Best",
+        "B: Desirable",
+        "C: Declining",
+        "D: Hazardous"
+      )),
+    fill.legend = tm_legend( title = "Historical HOLC grade",
+    ))  +
+  tm_compass(position = c("right", "top")) +
+  tm_scalebar(position = c("right", "bottom")) +
+  tm_title("Historical Redlining in Los Angeles")
+
+holc_map # Display map 
+
+```
+
+This map is showing us the neighborhoos and their corresponding HOLC grade, ranging from Best(A) to Hazardous (D)
+
+```{r}
+# Filter ejscreen to LA County
+ejscreen_filtered <- ejscreen |>
+  filter(
+    state_name == "California",
+    cnty_name == "Los Angeles County"
+  ) |>
+  mutate(bg_id = row_number())
+
+# Transform data to the same CRS
+ejscreen_filtered <- ejscreen_filtered |>
+  st_transform(3310) |>
+  st_make_valid()
+
+holc_transformed <- holc |>
+  select(grade) |>
+  st_transform(st_crs(ejscreen_filtered)) |>
+  st_make_valid()
+
+# Join HOLC grades to block groups
+ej_holc_join <- st_join(
+  ejscreen_filtered,
+  holc_transformed,
+  largest = TRUE,
+  left = TRUE
+)
+```
+
+```{r}
+# drop geometry and label block groups without a HOLC grade
+dropped_geom <- ej_holc_join |>
+  st_drop_geometry() |>
+  mutate(
+    grade = replace_na(as.character(grade), "Not graded"),
+    grade = factor(grade, levels = c("A", "B", "C", "D", "Not graded")
+    ))
+
+# Calculate block counts by grade
+grade_summ <- dropped_geom |>
+  group_by(grade, .drop = FALSE) |>
+  summarise(total_block_groups = n(), .groups = "drop") |> 
+  mutate(percentage = total_block_groups /sum(total_block_groups) * 100)
+
+# Display table
+kable(grade_summ, col.names = c(
+    "HOLC Grade",
+    "# of Block Groups",
+    "% of Block Groups"),
+  digits = 2,
+  caption = "LA County census blocks by HOLC grade."
+)
+```
+
+```{r}
+#| output: false
+
+# Mean low income population 
+low_income <- dropped_geom |>
+  group_by(grade) |>
+  summarise(mean_low_income = mean(lowincpct, na.rm = TRUE) * 100,
+  .groups = "drop")
+
+# Mean PM2.5 
+pm25 <- dropped_geom |>
+  group_by(grade) |>
+  summarise(mean_pm25 = mean(p_pm25, na.rm = TRUE),
+  .groups = "drop")
+
+# Mean low life expectancy 
+low_life_exp <- dropped_geom |>
+  group_by(grade) |>
+  summarise(mean_lle = mean(p_lifeexppct, na.rm = TRUE),
+  .groups = "drop")
+```
+  ```{r}
+  #| output: false
+
+  ggplot(
+  low_income, aes(x = grade, y = mean_low_income, fill = grade)) +
+  geom_col(color = "black", width = 0.6) +
+  scale_fill_manual(values = plot_colors) +
+  labs(
+    title = "Low Income Population by HOLC Grade",
+    x = "HOLC Grade",
+    y = "Mean Low Income Population Percent") +
+  theme_minimal() +
+  theme(
+    legend.position = "none",
+    panel.grid.major.x = element_blank()
+  )
+  ```
+
+  ```{r}
+  #| output: false
+
+  ggplot(pm25,
+  aes(x = grade, y = mean_pm25, fill = grade)) +
+  geom_col(color = "black", width = 0.6) +
+  scale_fill_manual(values = plot_colors) +
+  scale_y_continuous(limits = c(0, 100)) +
+  labs(
+    title = "PM2.5 Percentile by HOLC Grade",
+    x = "Assigned HOLC Grade",
+    y = "Mean PM2.5 Percentile"
+  ) +
+  theme_minimal() +
+  theme(
+    legend.position = "none",
+    panel.grid.major.x = element_blank())
+  ```
+
+  ```{r}
+  #| output: false
+
+  ggplot(low_life_exp,
+  aes(x = grade, y = mean_lle, fill = grade)) +
+  geom_col(color = "black", width = 0.6) +
+  scale_fill_manual(values = plot_colors) +
+  scale_y_continuous(limits = c(0, 100)) +
+  labs(
+    title = "Low Life Expectancy by HOLC Grade",
+    x = "Assigned HOLC Grade",
+    y = "Mean Low-Life-Expectancy Percentile") +
+  theme_minimal() +
+  theme(
+    legend.position = "none",
+    panel.grid.major.x = element_blank())
+  ```
+
+- Looking at the different plots for low-income populations, low life expectancy, and particualte matter, they are all highest in HOLC grade D areas, which is classified as "Hazardous", and are lowest in HOLC grade A areas, which is considered to be the "Best" areas. This pattern can lead us to believe that there are historical redlining that still have environmental and socioeconomic impacts on those that continue to live in these areas. 
+
+## Part 2 
+
+```{r}
+# Clean column names
+crashes <- crashes |>
+  clean_names()
+
+# look for missing coordinate pairs
+coordinate_missing<- crashes |>
+  summarise(
+    total_observations = n(),
+    missing_point_xy = sum(is.na(point_x) | is.na(point_y)),
+    missing_long_lat = sum(is.na(longitude) | is.na(latitude))
+  )
+
+kable(coordinate_missing)
+```
+
+```{r}
+# Filter pedestrian or bicycle crashes 
+bike_ped_crashes <- crashes |>
+  mutate(collision_date = lubridate::ymd(as.character(collision_date)),
+    number_killed = as.numeric(number_killed)) |>
+  filter(
+    collision_date >= as.Date("2020-01-01"),
+    collision_date <= as.Date("2025-12-31"),
+    pedestrian_accident == "Y" | bicycle_accident == "Y")
+
+# Remove missing coordinates
+sf_crashes <- bike_ped_crashes |>
+  drop_na(point_x, point_y) |>
+  st_as_sf(coords = c("point_x", "point_y"),
+    crs = 4326) |>
+  st_transform(st_crs(holc_transformed))
+```
+
+```{r}
+# Join crash points to HOLC grades
+crashes_holc <- st_join(
+  sf_crashes,holc_transformed |> select(grade))
+
+# keep crashes in the HOLC areas
+crashes_graded <- crashes_holc |>
+  st_drop_geometry() |>
+  filter(!is.na(grade))
+```
+
+
+```{r}
+# Count crashes in each HOLC grade
+most_crashes <- crashes_graded |>
+  group_by(grade, .drop = FALSE) |>
+  summarise(n_points = n(),.groups = "drop")
+
+# Calculate the percentage in each grade
+percent <- most_crashes |>
+  mutate(percentage = n_points / sum(n_points) * 100)
+
+kable(percent,
+  digits = 1,
+  caption = "Pedestrian and bicycle crashes by HOLC grade, 2020–2025.")
+```
+
+
+```{r}
+# Visualize crashes
+ggplot(data = percent,
+  mapping = aes(
+    x = grade,
+    y = percentage,
+    fill = grade
+  )) +
+  geom_col(color = "black", width = 0.6) +
+  scale_fill_manual(values = holc_colors) +
+  theme_bw() +
+  labs(
+    title = "Pedestrian and Bicycle Crashes by HOLC Grade from 2020 to 2025",
+    x = "HOLC Grade",
+    y = "Percent of Crashes",
+    fill = "HOLC Grade"
+  )
+```
