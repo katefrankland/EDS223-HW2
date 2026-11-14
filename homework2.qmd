@@ -121,9 +121,7 @@ holc_transformed <- holc |>
 # Join HOLC grades to block groups
 ej_holc_join <- st_join(
   ejscreen_filtered,
-  holc_transformed,
-  largest = TRUE,
-  left = TRUE
+  holc_transformed
 )
 ```
 
