@@ -10,7 +10,8 @@ execute:
   message: false
 ---
 
-### Github repo link: https://github.com/katefrankland/EDS223-HW2.git
+### Github repo link: 
+https://github.com/katefrankland/EDS223-HW2.git
 
 ## Setup
 
